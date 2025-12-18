@@ -7,11 +7,21 @@ import re
 Connection Handler for SMTPServer
 """
 class SMTPHandler(StreamRequestHandler):
+    @staticmethod
+    def _looks_like_tls_handshake(data: bytes) -> bool:
+        if len(data) < 3:
+            return False
+        if data[0] in (0x14, 0x15, 0x16, 0x17) and data[1] == 0x03 and data[2] in (0x00, 0x01, 0x02, 0x03, 0x04):
+            return True
+        if data[0] == 0x80:
+            return True
+        return False
+
     """
     Inits a variables for a new connection. This method IS called by method handle. This is NOT the constructor
     """
     def init(self):
-        self.rfile = self.connection.makefile()
+        self.rfile = self.connection.makefile('rb')
         self.message = self.server.messageHandler.addMessage()
         self.auth = None
         self.startedTLS = False
@@ -26,7 +36,18 @@ class SMTPHandler(StreamRequestHandler):
     @return: Read line
     """
     def readLine(self):
-        line = self.rfile.readline().strip()
+        raw = self.rfile.readline()
+        if raw == b"":
+            raise ConnectionError("Client closed the connection")
+        raw = raw.rstrip(b"\r\n")
+
+        if self._looks_like_tls_handshake(raw):
+            raise ValueError(
+                "Client appears to be speaking TLS to a plaintext SMTP socket. "
+                "Enable implicit TLS with --SSL (e.g., port 465) or use STARTTLS on port 587."
+            )
+
+        line = raw.decode("utf-8", errors="replace")
         if (self.server.printLines):
             print("C:" + line)
         return line
@@ -104,7 +125,8 @@ class SMTPHandler(StreamRequestHandler):
         if (line == "STARTTLS"):
             self.writeLine("220 2.0.0 Ready to start TLS")
             self.connection = self.server.wrapSSL(self.connection)
-            self.rfile = self.connection.makefile()
+            self.rfile = self.connection.makefile('rb')
+            self.startedTLS = True
 
             self.readEHLO()
             self.sendHELLO()
