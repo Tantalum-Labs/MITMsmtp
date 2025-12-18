@@ -3,6 +3,19 @@ MITMsmtp is an Evil SMTP Server for pentesting SMTP clients to catch login crede
 
 MITMsmtp offers a command line tool as well as an open Python3 API which can be used to build own tools for automated pentesting of applications.
 
+## Fork Notice (Tantalum Labs)
+This repository is a fork of the original MITMsmtp project by Robin Meis (upstream: https://github.com/RobinMeis/MITMsmtp) and is maintained by Tantalum Labs.
+
+See `CHANGELOG.md` for a summary of the features and fixes added in this fork.
+
+**Legal/Ethical Use:** Use only on systems you own or where you have explicit permission to test.
+
+### Highlights (this fork)
+* Optional built-in DNS responder for lab setups (`--enable-dns`, `--dns-ip`, `--print-dns`)
+* More robust SMTP handling (safe socket decoding, better `MAIL FROM`/`RCPT TO` parsing, cleaner `QUIT` handling)
+* Authentication flow fixes (successful AUTH now responds with `235`, tolerate clients trying multiple AUTH methods)
+* Helper script `MITMsmtp/smtp_test.py` to validate STARTTLS/SMTPS authentication in a controlled environment
+
 ## Compatibility
 MITMsmtp has been tested against the SMTP client of Thunderbird 60.5.3 and some other SMTP clients.
 
@@ -26,7 +39,7 @@ MITMsmtp requires Python3 and setuptools. You might want to install git as well.
 
 Now just clone the MITMsmtp repository:
 
-`git clone https://github.com/RobinMeis/MITMsmtp.git`
+`git clone <this-fork-repo-url>`
 
 Change into MITMsmtp directory and start the installation:
 
@@ -42,8 +55,17 @@ That's it!
 ## Usage
 *MITMsmtp can be used as standalone command line application and offers an easy to use Python3 API to integrate in your own project*
 
-### Command Line
-Running `MITMsmtp --help` will give you an overview about the available command line switches:
+### Command Line (Tantalum Labs runner)
+This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` (includes optional DNS responder support):
+
+* Show options: `python3 MITMsmtp/MITMsmtp.py --help`
+* Plain SMTP: `python3 MITMsmtp/MITMsmtp.py --port 587 --print-lines`
+* STARTTLS: `python3 MITMsmtp/MITMsmtp.py --STARTTLS --port 587 --print-lines`
+* SMTPS (implicit TLS): `python3 MITMsmtp/MITMsmtp.py --SSL --port 465 --print-lines`
+* DNS responder + SMTP (lab use): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --print-dns --print-lines`
+
+### Command Line (legacy packaged entrypoint)
+Running `MITMsmtp --help` will give you an overview about the available command line switches (legacy CLI; default port 8587):
 ```
 usage: MITMsmtp [-h] [--server_address SERVER_ADDRESS] [--port PORT]
                 [--server_name SERVER_NAME] [--STARTTLS] [--SSL]
@@ -99,7 +121,7 @@ Recipients: recipient-a@example.com
 If you want to get the full message, you have to enable logging.
 
 ### Logging
-Running `MITMsmtp --log logdir` will enable logging. Please make sure that the directory exists. MITMsmtp will create n+1 files while n is the amount of received messages. Each mail will be written into a new file like it has been received. Additionally all received credentials are stored in `credentials.log`.
+Running `MITMsmtp --log logdir` will enable logging in the legacy CLI. Please make sure that the directory exists. MITMsmtp will create n+1 files while n is the amount of received messages. Each mail will be written into a new file like it has been received. Additionally all received credentials are stored in `credentials.log`.
 
 ### Encryption
 Some clients fallback to unencrypted mode if you don't offer SSL/TLS. Always make sure to test this! For clients which don't fallback, you may want to test the encrypted mode. Please keep in mind, that a correctly configured client won't be vulnerable to this attack. You will be unable to fake a trusted certificate for a validated common name and thus the client will stop connection before sending credentials. However some clients don't implement proper certificate validation. This is where this attack starts.
@@ -117,6 +139,15 @@ To use MITMsmtp with the example certificates run `MITMsmtp --SSL`.
 ### API
 For an example you might want to consult `MITMsmtp/__main__.py`. More docs will be available soon!
 
+### Helper: smtp_test.py
+This fork includes `MITMsmtp/smtp_test.py`, a small script to validate SMTP authentication against a server that you control (useful for verifying TLS mode selection and reproducing client auth behavior in a lab).
+
+Examples:
+
+* STARTTLS (port defaults to 587): `python3 MITMsmtp/smtp_test.py --startls --smtp 127.0.0.1 --user test@example.com --pass testpass --insecure`
+* SMTPS / implicit TLS (port defaults to 465): `python3 MITMsmtp/smtp_test.py --ssl --smtp 127.0.0.1 --user test@example.com --pass testpass --insecure`
+* Specify a port: `python3 MITMsmtp/smtp_test.py --startls --smtp 127.0.0.1:587 --user test@example.com --pass testpass --debug`
+
 ## MITM
 This section shows the usage of MITMsmtp if you are able to intercept the victims traffic.
 
@@ -133,7 +164,7 @@ To make sure that out victim doesn't find a way around us, block ICMP redirects:
 
 `sysctl -w net.ipv4.conf.all.send_redirects=0`
 
-Next we create a port forwarding rule from SMTP default port 587 to MITMsmtp. Please make sure that your victim uses port 587 and adjust if needed.
+Next we create a port forwarding rule from SMTP default port 587 to MITMsmtp (legacy default is 8587; adjust to match your local listener port).
 
 `iptables -t nat -A PREROUTING -p tcp --destination-port 587 -j REDIRECT --to-port 8587`
 
