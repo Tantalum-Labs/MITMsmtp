@@ -146,6 +146,9 @@ class SMTPHandler(StreamRequestHandler):
     """
     def readAuth(self):
         line = self.readLine()
+        self._readAuthLine(line)
+
+    def _readAuthLine(self, line):
         authMethod = self.server.authHandler.matchMethod(line)
         if (authMethod == None): #No supported auth method found
             if (line == "QUIT"):
@@ -163,6 +166,11 @@ class SMTPHandler(StreamRequestHandler):
     """
     def readSender(self):
         line = self.readLine()
+
+        # Some clients may try multiple AUTH mechanisms (or pipeline) before sending MAIL FROM.
+        while (line.upper().startswith("AUTH ")):
+            self._readAuthLine(line)
+            line = self.readLine()
         
         # More flexible regex to handle various MAIL FROM formats
         # Handles: MAIL FROM:<email@domain.com>, MAIL FROM:<>, mail from:<user@host>, etc.
