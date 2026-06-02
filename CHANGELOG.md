@@ -6,6 +6,7 @@ This repository is a fork of MITMsmtp by Robin Meis (upstream: https://github.co
 
 ### Added
 - Optional built-in DNS responder (`MITMsmtp/DNSServer.py`) with CLI flags in `MITMsmtp/MITMsmtp.py` (`--enable-dns`, `--dns-port`, `--dns-ip`, `--print-dns`).
+- Optional rogue SMB server (`MITMsmtp/SMBServer.py`) that captures NTLM credentials (NetNTLMv1/NetNTLMv2 hashes) from SMB clients such as printers/scanners using "Scan to SMB". CLI flags in `MITMsmtp/MITMsmtp.py` (`--enable-smb`, `--smb-port`, `--smb-challenge`, `--smb-target-name`, `--smb-log`, `--print-smb`). Captured hashes are printed in a hashcat-crackable format (mode 5500/5600) and can be appended to `smb_credentials.log`.
 - Helper script `MITMsmtp/smtp_test.py` for validating STARTTLS/SMTPS authentication (`--ssl` / `--startls`) and reporting TLS details.
 
 ### Fixed

@@ -12,6 +12,7 @@ See `CHANGELOG.md` for a summary of the features and fixes added in this fork.
 
 ### Highlights (this fork)
 * Optional built-in DNS responder for lab setups (`--enable-dns`, `--dns-ip`, `--print-dns`)
+* Optional rogue SMB server to capture NTLM credentials from SMB clients such as printers using "Scan to SMB" (`--enable-smb`, `--print-smb`)
 * More robust SMTP handling (safe socket decoding, better `MAIL FROM`/`RCPT TO` parsing, cleaner `QUIT` handling)
 * Authentication flow fixes (successful AUTH now responds with `235`, tolerate clients trying multiple AUTH methods)
 * Helper script `MITMsmtp/smtp_test.py` to validate STARTTLS/SMTPS authentication in a controlled environment
@@ -63,6 +64,7 @@ This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` (inclu
 * STARTTLS: `python3 MITMsmtp/MITMsmtp.py --STARTTLS --port 587 --print-lines`
 * SMTPS (implicit TLS): `python3 MITMsmtp/MITMsmtp.py --SSL --port 465 --print-lines`
 * DNS responder + SMTP (lab use): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --print-dns --print-lines`
+* SMB credential capture (e.g. printer Scan to SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --print-smb`
 
 ### Command Line (legacy packaged entrypoint)
 Running `MITMsmtp --help` will give you an overview about the available command line switches (legacy CLI; default port 8587):
@@ -122,6 +124,37 @@ If you want to get the full message, you have to enable logging.
 
 ### Logging
 Running `MITMsmtp --log logdir` will enable logging in the legacy CLI. Please make sure that the directory exists. MITMsmtp will create n+1 files while n is the amount of received messages. Each mail will be written into a new file like it has been received. Additionally all received credentials are stored in `credentials.log`.
+
+### SMB credential capture (printers / scanners)
+Many multifunction printers, scanners and appliances offer a "Scan to SMB" (a.k.a. "Scan to network folder") feature that authenticates to an SMB share using a configured service account. When you can convince such a device to connect to a machine you control (for example via the bundled DNS responder, ARP spoofing, or simply by entering your host as the SMB target), this fork can stand up a rogue SMB server that captures the NTLM authentication and reconstructs the NetNTLMv1/NetNTLMv2 hash for offline cracking.
+
+Start the runner with `--enable-smb` (port 445 requires root):
+
+`sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --print-smb`
+
+Point the device's SMB/scan target at your host. When it authenticates you will see something like:
+
+```
+[SMB] *** NetNTLMv2 HASH CAPTURED *** from 192.168.1.50
+[SMB] User: CONTOSO\scan-svc (workstation: RICOH-MFP)
+[SMB] NetNTLMv2 (hashcat -m 5600)
+[SMB] scan-svc::CONTOSO:1122334455667788:<NTProofStr>:<blob>
+```
+
+Crack the captured hash offline, e.g. with hashcat:
+
+* NetNTLMv2: `hashcat -m 5600 captured.txt wordlist.txt`
+* NetNTLMv1: `hashcat -m 5500 captured.txt wordlist.txt`
+
+Useful options:
+
+* `--smb-port` &mdash; listen on a non-standard port (default `445`)
+* `--smb-challenge` &mdash; set the 8-byte server challenge as 16 hex chars (default `1122334455667788`; a fixed challenge lets you use precomputed/rainbow tables)
+* `--smb-target-name` &mdash; the NetBIOS/domain name advertised to clients (default `WORKGROUP`)
+* `--smb-log` &mdash; directory to append captured hashes to (`smb_credentials.log`)
+* `--print-smb` &mdash; print SMB protocol activity
+
+The SMB server only implements enough of SMB2 to elicit and capture the NTLM authentication; it does not serve files, so after credentials are captured the client is told the logon failed. Challenge-response auth means the cleartext password is not exposed directly &mdash; you capture a crackable hash. Combine `--enable-smb` with `--enable-dns` to also resolve the share's hostname to your machine.
 
 ### Encryption
 Some clients fallback to unencrypted mode if you don't offer SSL/TLS. Always make sure to test this! For clients which don't fallback, you may want to test the encrypted mode. Please keep in mind, that a correctly configured client won't be vulnerable to this attack. You will be unable to fake a trusted certificate for a validated common name and thus the client will stop connection before sending credentials. However some clients don't implement proper certificate validation. This is where this attack starts.

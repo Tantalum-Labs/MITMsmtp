@@ -3,6 +3,7 @@
 from SMTPServer import ThreadedSMTPServer
 from SMTPHandler import SMTPHandler
 from DNSServer import DNSServer
+from SMBServer import SMBServer
 import threading
 import os
 import argparse
@@ -167,7 +168,15 @@ def main():
     parser.add_argument('--dns-port', type=int, default=53, help='DNS port to listen on (default: 53)')
     parser.add_argument('--dns-ip', help='IP address to respond with for all DNS queries (defaults to --server_address)')
     parser.add_argument('--print-dns', action='store_true', help='Print DNS queries')
-    
+
+    # SMB server options
+    parser.add_argument('--enable-smb', action='store_true', help='Enable rogue SMB server to capture NTLM credentials (e.g. from printers using Scan to SMB)')
+    parser.add_argument('--smb-port', type=int, default=445, help='SMB port to listen on (default: 445)')
+    parser.add_argument('--smb-challenge', default='1122334455667788', help='8-byte server challenge as 16 hex chars (default: 1122334455667788)')
+    parser.add_argument('--smb-target-name', default='WORKGROUP', help='NetBIOS/domain name to advertise to SMB clients (default: WORKGROUP)')
+    parser.add_argument('--smb-log', help='Directory to append captured SMB hashes to (smb_credentials.log)')
+    parser.add_argument('--print-smb', action='store_true', help='Print SMB protocol activity')
+
     args = parser.parse_args()
     
     # Set up signal handler for graceful shutdown
@@ -191,7 +200,23 @@ def main():
             response_ip=dns_ip,
             print_queries=args.print_dns
         )
-    
+
+    # Initialize SMB server if enabled
+    smb_server = None
+    if args.enable_smb:
+        try:
+            smb_server = SMBServer(
+                listen_address=args.server_address,
+                listen_port=args.smb_port,
+                challenge=args.smb_challenge,
+                target_name=args.smb_target_name,
+                log_dir=args.smb_log,
+                print_smb=args.print_smb
+            )
+        except ValueError as e:
+            print(f"[SMB ERROR] {e}")
+            sys.exit(1)
+
     # Create and start the MITM SMTP server
     mitm_server = MITMsmtp(
         server_address=args.server_address,
@@ -222,7 +247,19 @@ def main():
                 if args.dns_port == 53:
                     print("[DNS HINT] Port 53 requires root privileges. Try: sudo python MITMsmtp.py ...")
                 sys.exit(1)
-        
+
+        # Start SMB server (if enabled)
+        if smb_server:
+            try:
+                smb_server.start()
+                print(f"[SMB] SMB server listening on {args.server_address}:{args.smb_port}")
+                print("[SMB] Point a client (e.g. printer Scan to SMB) at this host to capture NTLM hashes")
+            except Exception as e:
+                print(f"[SMB ERROR] Failed to start SMB server: {e}")
+                if args.smb_port == 445:
+                    print("[SMB HINT] Port 445 requires root privileges and must not be in use. Try: sudo python MITMsmtp.py ...")
+                sys.exit(1)
+
         # Start SMTP server
         print(f"[SMTP] Starting SMTP server on {args.server_address}:{args.port}")
         if args.STARTTLS:
@@ -254,6 +291,8 @@ def main():
         try:
             if dns_server:
                 dns_server.stop()
+            if smb_server:
+                smb_server.stop()
             mitm_server.stop()
             print("[INFO] All servers stopped")
         except:
