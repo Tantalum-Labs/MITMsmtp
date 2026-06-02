@@ -38,7 +38,10 @@ import threading
 import subprocess
 
 # Candidate executable names for impacket's ntlmrelayx, in preference order.
-_NTLMRELAYX_NAMES = ("ntlmrelayx.py", "ntlmrelayx")
+# - "ntlmrelayx.py" / "ntlmrelayx": pip install impacket (and most setups)
+# - "impacket-ntlmrelayx": Kali / Parrot / Debian "impacket-scripts" package,
+#   which installs the example scripts to /usr/bin with an "impacket-" prefix.
+_NTLMRELAYX_NAMES = ("ntlmrelayx.py", "ntlmrelayx", "impacket-ntlmrelayx")
 
 
 class NTLMRelay:
@@ -150,9 +153,12 @@ class NTLMRelay:
 
         binary = self.binary or self.find_binary()
         if binary is None:
-            hint = ("ntlmrelayx not found. Install impacket to enable relay mode:\n"
+            hint = ("ntlmrelayx not found (looked for %s on PATH).\n"
+                    "Install impacket to enable relay mode:\n"
                     "    pip install impacket        # or: pip install MITMsmtp[relay]\n"
-                    "Then ensure ntlmrelayx.py is on your PATH.")
+                    "    apt install impacket-scripts # Kali/Parrot/Debian (provides impacket-ntlmrelayx)\n"
+                    "Or point --relay-bin at the binary directly."
+                    % ", ".join(_NTLMRELAYX_NAMES))
             raise RuntimeError(hint)
         self.binary = binary
 

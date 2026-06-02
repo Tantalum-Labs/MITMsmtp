@@ -193,8 +193,10 @@ Relay options:
 * `--relay-output-prefix PREFIX` &mdash; file prefix for dumped loot (`-of`)
 * `--relay-no-smb2support` &mdash; omit `-smb2support` (it is passed by default; most clients use SMB2+)
 * `--relay-extra "..."` &mdash; raw arguments passed verbatim to `ntlmrelayx` for anything not exposed above (e.g. `--relay-extra "--remove-mic -debug"`)
-* `--relay-bin PATH` &mdash; explicit path to `ntlmrelayx(.py)` if it is not on your `PATH`
+* `--relay-bin PATH` &mdash; explicit path to `ntlmrelayx` if it is not auto-detected
 * `--relay-dry-run` &mdash; print the command that would be run, then exit
+
+`ntlmrelayx` is auto-detected on your `PATH` under any of these names: `ntlmrelayx.py`, `ntlmrelayx`, or `impacket-ntlmrelayx`. The last one is what **Kali / Parrot / Debian** install via the `impacket-scripts` package (their packaging prefixes the impacket example scripts with `impacket-`), so on a stock Kali (`apt install impacket-scripts`) it is found automatically. `pip install impacket` instead provides `ntlmrelayx.py`. If yours lives somewhere unusual, point `--relay-bin` at it.
 
 Important constraints:
 
