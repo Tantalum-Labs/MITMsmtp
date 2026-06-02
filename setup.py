@@ -19,6 +19,11 @@ setuptools.setup(
     classifiers=[
         "Programming Language :: Python :: 3",
     ],
+    extras_require={
+        # NTLM relay mode delegates to impacket's ntlmrelayx. Install with:
+        #   pip install MITMsmtp[relay]
+        "relay": ["impacket>=0.11.0"],
+    },
     entry_points={
         'console_scripts': [
             'MITMsmtp = MITMsmtp.__main__:main'
