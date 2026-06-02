@@ -151,6 +151,7 @@ Useful options:
 * `--smb-port` &mdash; listen on a non-standard port (default `445`)
 * `--smb-challenge` &mdash; set the 8-byte server challenge as 16 hex chars (default `1122334455667788`; a fixed challenge lets you use precomputed/rainbow tables)
 * `--smb-target-name` &mdash; the NetBIOS/domain name advertised to clients (default `WORKGROUP`)
+* `--smb-force-lm-downgrade` &mdash; force clients into the legacy LMv1/NTLMv1 response so you capture the much weaker LM hash. This advertises a challenge without extended session security or target info, which makes the client compute the legacy 24-byte LM/NT responses (crack with `hashcat -m 5500`). Useful against older printers/devices that still honour the downgrade; modern hosts may refuse or send a null LM response.
 * `--smb-log` &mdash; directory to append captured hashes to (`smb_credentials.log`)
 * `--print-smb` &mdash; print SMB protocol activity
 

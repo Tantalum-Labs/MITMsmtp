@@ -174,6 +174,7 @@ def main():
     parser.add_argument('--smb-port', type=int, default=445, help='SMB port to listen on (default: 445)')
     parser.add_argument('--smb-challenge', default='1122334455667788', help='8-byte server challenge as 16 hex chars (default: 1122334455667788)')
     parser.add_argument('--smb-target-name', default='WORKGROUP', help='NetBIOS/domain name to advertise to SMB clients (default: WORKGROUP)')
+    parser.add_argument('--smb-force-lm-downgrade', action='store_true', help='Force clients into a legacy LMv1/NTLMv1 response to capture weaker LM hashes (hashcat -m 5500)')
     parser.add_argument('--smb-log', help='Directory to append captured SMB hashes to (smb_credentials.log)')
     parser.add_argument('--print-smb', action='store_true', help='Print SMB protocol activity')
 
@@ -211,7 +212,8 @@ def main():
                 challenge=args.smb_challenge,
                 target_name=args.smb_target_name,
                 log_dir=args.smb_log,
-                print_smb=args.print_smb
+                print_smb=args.print_smb,
+                force_lm_downgrade=args.smb_force_lm_downgrade
             )
         except ValueError as e:
             print(f"[SMB ERROR] {e}")
