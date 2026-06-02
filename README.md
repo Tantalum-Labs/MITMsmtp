@@ -203,6 +203,8 @@ Relay options:
 > `sudo "$(command -v python3)" -m MITMsmtp --relay --relay-target ldaps://dc01`
 >
 > (`sudo MITMsmtp ...` or `sudo python3 ...` may instead pick the system Python, which is not in your venv.) Alternatively, pin it explicitly: `--relay-bin "$(command -v ntlmrelayx.py)"`. Note we run `ntlmrelayx` as a separate process &mdash; MITMsmtp does not import impacket as a library, so impacket only needs to be available to whichever Python ends up launching `ntlmrelayx`.
+>
+> **`SyntaxError` from ntlmrelayx.py on startup?** That means the Python launching `ntlmrelayx` is too old to parse it &mdash; almost always the same sudo/venv mismatch: a recent `ntlmrelayx.py` (e.g. the `/usr/share/doc/python3-impacket/examples` copy) is being run by an older system Python instead of your venv's. Run MITMsmtp with the venv's Python (as above) and let detection pick the venv's own matching `ntlmrelayx.py` &mdash; don't pin `--relay-bin` to the `/usr/share/doc` copy when your impacket lives in a venv. MITMsmtp now detects this immediate exit and prints the same guidance instead of a bare traceback.
 
 Important constraints:
 

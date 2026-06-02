@@ -32,6 +32,7 @@ authorised to test.
 
 import os
 import sys
+import time
 import shlex
 import shutil
 import tempfile
@@ -231,6 +232,27 @@ class NTLMRelay:
             self.thread = threading.Thread(target=self._pump_output)
             self.thread.daemon = True
             self.thread.start()
+
+        # If ntlmrelayx dies right away, surface a clear diagnosis rather than
+        # leaving the user staring at a raw traceback. The most common cause is
+        # an interpreter mismatch: e.g. running under sudo picks the system
+        # Python (not your venv), which may be too old to even parse a newer
+        # ntlmrelayx.py (SyntaxError) or may not have impacket importable.
+        time.sleep(1.5)
+        if self.process.poll() is not None and self.process.returncode != 0:
+            code = self.process.returncode
+            raise RuntimeError(
+                "ntlmrelayx exited immediately (exit code %d) -- see the [RELAY] output above.\n"
+                "Most often this is a Python/impacket mismatch:\n"
+                "  - A 'SyntaxError' means the Python launching ntlmrelayx (%s) is too old to\n"
+                "    parse that ntlmrelayx.py. This usually happens under sudo, which uses the\n"
+                "    system Python instead of your virtualenv. Run MITMsmtp with the venv's\n"
+                "    Python so both match, e.g.:\n"
+                "        sudo \"%s\" -m MITMsmtp --relay ...\n"
+                "    and let auto-detection pick the matching ntlmrelayx (drop --relay-bin, or\n"
+                "    point it at that venv's ntlmrelayx.py rather than the /usr/share/doc copy).\n"
+                "  - An ImportError for impacket means it is not installed for that interpreter."
+                % (code, sys.executable, sys.executable))
 
     def _pump_output(self):
         """Stream subprocess output with a [RELAY] prefix."""
