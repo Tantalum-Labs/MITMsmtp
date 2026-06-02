@@ -196,7 +196,13 @@ Relay options:
 * `--relay-bin PATH` &mdash; explicit path to `ntlmrelayx` if it is not auto-detected
 * `--relay-dry-run` &mdash; print the command that would be run, then exit
 
-`ntlmrelayx` is auto-detected on your `PATH` under any of these names: `ntlmrelayx.py`, `ntlmrelayx`, or `impacket-ntlmrelayx`. The last one is what **Kali / Parrot / Debian** install via the `impacket-scripts` package (their packaging prefixes the impacket example scripts with `impacket-`), so on a stock Kali (`apt install impacket-scripts`) it is found automatically. `pip install impacket` instead provides `ntlmrelayx.py`. If yours lives somewhere unusual, point `--relay-bin` at it.
+`ntlmrelayx` is auto-detected under any of these names: `ntlmrelayx.py`, `ntlmrelayx`, or `impacket-ntlmrelayx`. The last one is what **Kali / Parrot / Debian** install via the `impacket-scripts` package (their packaging prefixes the impacket example scripts with `impacket-`), so on a stock Kali (`apt install impacket-scripts`) it is found automatically. `pip install impacket` instead provides `ntlmrelayx.py`. Detection searches your `PATH` first, then a few locations that `PATH` can miss: the bin directory of the running interpreter (the active virtualenv), `$VIRTUAL_ENV/bin`, `~/.local/bin`, and Debian/Kali's `/usr/share/doc/python3-impacket/examples`.
+
+> **sudo + virtualenv gotcha:** `ntlmrelayx` needs root to bind ports 445/80, so you will usually run with `sudo`. But `sudo` resets `PATH` to a sanitized `secure_path` that does **not** include your virtualenv's `bin`, so a `pip install impacket` inside a venv becomes invisible. MITMsmtp works around this by also looking next to the interpreter that is actually running it, so the reliable invocation is to run the venv's Python directly under sudo:
+>
+> `sudo "$(command -v python3)" -m MITMsmtp --relay --relay-target ldaps://dc01`
+>
+> (`sudo MITMsmtp ...` or `sudo python3 ...` may instead pick the system Python, which is not in your venv.) Alternatively, pin it explicitly: `--relay-bin "$(command -v ntlmrelayx.py)"`. Note we run `ntlmrelayx` as a separate process &mdash; MITMsmtp does not import impacket as a library, so impacket only needs to be available to whichever Python ends up launching `ntlmrelayx`.
 
 Important constraints:
 

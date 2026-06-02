@@ -31,6 +31,7 @@ authorised to test.
 """
 
 import os
+import sys
 import shlex
 import shutil
 import tempfile
@@ -92,12 +93,55 @@ class NTLMRelay:
         self._temp_targets_file = None
 
     @staticmethod
+    def _extra_search_dirs():
+        """Directories to check beyond $PATH.
+
+        This matters when ntlmrelayx was pip-installed into a virtualenv but the
+        process PATH does not contain the venv's bin directory -- most commonly
+        when running under ``sudo`` (which resets PATH to a sanitized
+        secure_path). The currently running interpreter (``sys.executable``)
+        still points into the venv, so its bin directory is the reliable place
+        to look. We also check $VIRTUAL_ENV and Debian/Kali's bundled examples.
+        """
+        dirs = []
+        # bin/ of the interpreter actually running us (the active venv)
+        dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
+        venv = os.environ.get("VIRTUAL_ENV")
+        if venv:
+            dirs.append(os.path.join(venv, "bin"))
+        dirs.append(os.path.expanduser("~/.local/bin"))
+        # Debian/Kali ship the example scripts here (as documentation)
+        dirs.append("/usr/share/doc/python3-impacket/examples")
+        # If impacket is importable, look in the bin/ next to its site-packages
+        try:
+            import impacket
+            site_packages = os.path.dirname(os.path.dirname(impacket.__file__))
+            dirs.append(os.path.join(os.path.dirname(site_packages), "bin"))
+        except Exception:
+            pass
+        # De-duplicate while preserving order
+        seen = set()
+        unique = []
+        for d in dirs:
+            if d and d not in seen:
+                seen.add(d)
+                unique.append(d)
+        return unique
+
+    @staticmethod
     def find_binary():
         """Return the path to ntlmrelayx if available, otherwise None."""
+        # 1) Anything on PATH (pip install in an active venv, Kali impacket-scripts)
         for name in _NTLMRELAYX_NAMES:
             path = shutil.which(name)
             if path:
                 return path
+        # 2) Known locations that PATH may miss (e.g. venv bin when run via sudo)
+        for directory in NTLMRelay._extra_search_dirs():
+            for name in _NTLMRELAYX_NAMES:
+                candidate = os.path.join(directory, name)
+                if os.path.isfile(candidate):
+                    return candidate
         return None
 
     @staticmethod
@@ -153,16 +197,26 @@ class NTLMRelay:
 
         binary = self.binary or self.find_binary()
         if binary is None:
-            hint = ("ntlmrelayx not found (looked for %s on PATH).\n"
+            hint = ("ntlmrelayx not found (looked for %s on PATH and in %s).\n"
                     "Install impacket to enable relay mode:\n"
                     "    pip install impacket        # or: pip install MITMsmtp[relay]\n"
                     "    apt install impacket-scripts # Kali/Parrot/Debian (provides impacket-ntlmrelayx)\n"
-                    "Or point --relay-bin at the binary directly."
-                    % ", ".join(_NTLMRELAYX_NAMES))
+                    "If it is pip-installed in a virtualenv and you are using sudo, sudo strips the\n"
+                    "venv from PATH. Run the venv's Python directly, e.g.:\n"
+                    "    sudo \"$(command -v python3)\" -m MITMsmtp --relay ...\n"
+                    "or point --relay-bin at the binary directly (e.g. --relay-bin \"$(command -v ntlmrelayx.py)\")."
+                    % (", ".join(_NTLMRELAYX_NAMES), ", ".join(self._extra_search_dirs())))
             raise RuntimeError(hint)
         self.binary = binary
 
         cmd = self.build_command(allow_tempfile=True)
+        # If we resolved a .py script, run it with the current interpreter. This
+        # keeps it inside the active venv (where impacket is importable) and also
+        # works when the script lacks the executable bit (e.g. the Debian/Kali
+        # /usr/share/doc examples copy).
+        if cmd[0].endswith(".py"):
+            cmd = [sys.executable] + cmd
+
         print("[RELAY] Starting ntlmrelayx: %s" % " ".join(shlex.quote(c) for c in cmd))
 
         self.process = subprocess.Popen(
