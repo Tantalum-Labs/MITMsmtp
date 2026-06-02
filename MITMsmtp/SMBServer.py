@@ -191,6 +191,10 @@ def parse_ntlm_authenticate(msg, server_challenge):
         username = field(36).decode("utf-16-le", errors="replace")
         workstation = field(44).decode("utf-16-le", errors="replace")
 
+        # Anonymous/null session setup: no response material to capture.
+        if not nt_response and not lm_response:
+            return None
+
         challenge_hex = binascii.hexlify(server_challenge).decode("ascii")
 
         if len(nt_response) > 24:
@@ -290,6 +294,8 @@ class _SMBRequestHandler(BaseRequestHandler):
                         result = parse_ntlm_authenticate(ntlm_msg, server.challenge)
                         if result:
                             server.report_capture(client_ip, result)
+                        elif server.print_smb:
+                            print("[SMB] Anonymous/empty authenticate from %s (nothing to capture)" % client_ip)
                         # Tell the client the logon failed and end the session.
                         self._send_session_setup(
                             message_id, req_session_id or session_id,

@@ -12,7 +12,9 @@ See `CHANGELOG.md` for a summary of the features and fixes added in this fork.
 
 ### Highlights (this fork)
 * Optional built-in DNS responder for lab setups (`--enable-dns`, `--dns-ip`, `--print-dns`)
-* Optional rogue SMB server to capture NTLM credentials from SMB clients such as printers using "Scan to SMB" (`--enable-smb`, `--print-smb`)
+* Optional rogue SMB server to capture NTLM credentials (NetNTLMv1/NetNTLMv2 hashes) from SMB clients such as printers using "Scan to SMB" (`--enable-smb`, `--print-smb`)
+* Optional NTLM "Force LM downgrade" to coax legacy clients into the weaker LMv1/NTLMv1 response (`--smb-force-lm-downgrade`)
+* All three servers (SMTP, DNS, SMB) can run together from a single runner so a device can be redirected and have its hostname resolved and credentials captured in one shot
 * More robust SMTP handling (safe socket decoding, better `MAIL FROM`/`RCPT TO` parsing, cleaner `QUIT` handling)
 * Authentication flow fixes (successful AUTH now responds with `235`, tolerate clients trying multiple AUTH methods)
 * Helper script `MITMsmtp/smtp_test.py` to validate STARTTLS/SMTPS authentication in a controlled environment
@@ -57,7 +59,7 @@ That's it!
 *MITMsmtp can be used as standalone command line application and offers an easy to use Python3 API to integrate in your own project*
 
 ### Command Line (Tantalum Labs runner)
-This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` (includes optional DNS responder support):
+This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` with optional DNS responder and rogue SMB server support. The SMTP, DNS and SMB servers can be enabled independently or all together:
 
 * Show options: `python3 MITMsmtp/MITMsmtp.py --help`
 * Plain SMTP: `python3 MITMsmtp/MITMsmtp.py --port 587 --print-lines`
@@ -65,6 +67,8 @@ This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` (inclu
 * SMTPS (implicit TLS): `python3 MITMsmtp/MITMsmtp.py --SSL --port 465 --print-lines`
 * DNS responder + SMTP (lab use): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --print-dns --print-lines`
 * SMB credential capture (e.g. printer Scan to SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --print-smb`
+* SMB with forced LM downgrade: `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --smb-force-lm-downgrade --print-smb`
+* Everything at once (DNS + SMTP + SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --enable-smb --print-dns --print-smb --print-lines`
 
 ### Command Line (legacy packaged entrypoint)
 Running `MITMsmtp --help` will give you an overview about the available command line switches (legacy CLI; default port 8587):
@@ -172,6 +176,22 @@ To use MITMsmtp with the example certificates run `MITMsmtp --SSL`.
 
 ### API
 For an example you might want to consult `MITMsmtp/__main__.py`. More docs will be available soon!
+
+The SMB server is also usable as a small standalone Python API. Provide a `capture_callback` to receive each captured credential as a dict (`username`, `domain`, `workstation`, `version`, `hashcat_mode`, `credential`):
+
+```python
+from MITMsmtp.SMBServer import SMBServer
+
+def on_capture(client_ip, result):
+    print("Captured %s from %s: %s" % (result["version"], client_ip, result["credential"]))
+
+smb = SMBServer(listen_address="0.0.0.0", listen_port=445,
+                target_name="WORKGROUP", force_lm_downgrade=False,
+                capture_callback=on_capture)
+smb.start()
+# ... run until done ...
+smb.stop()
+```
 
 ### Helper: smtp_test.py
 This fork includes `MITMsmtp/smtp_test.py`, a small script to validate SMTP authentication against a server that you control (useful for verifying TLS mode selection and reproducing client auth behavior in a lab).
