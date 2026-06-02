@@ -12,6 +12,7 @@ This repository is a fork of MITMsmtp by Robin Meis (upstream: https://github.co
 - Helper script `MITMsmtp/smtp_test.py` for validating STARTTLS/SMTPS authentication (`--ssl` / `--startls`) and reporting TLS details.
 
 ### Fixed
+- Make the new DNS/SMB/relay flags reachable from the installed `MITMsmtp` command and `python3 -m MITMsmtp`. Previously these only worked via `python3 MITMsmtp/MITMsmtp.py`, so `MITMsmtp --relay` (and `--enable-smb`/`--enable-dns`) failed with "unrecognized arguments", and `python3 -m MITMsmtp` errored on import. The package entry point now routes to the full-featured runner; the original SMTP-only CLI is preserved as `MITMsmtp-legacy` / `python3 -m MITMsmtp.legacy`. `MITMsmtp/MITMsmtp.py` now uses import fallbacks so it works both as a script and as a package module.
 - Avoid `UnicodeDecodeError` by reading client input in binary mode and decoding safely (`MITMsmtp/SMTPHandler.py`).
 - Detect likely TLS handshakes on a plaintext SMTP socket and emit a clearer error (`MITMsmtp/SMTPHandler.py`).
 - Handle `QUIT` cleanly without stack traces (`MITMsmtp/SMTPHandler.py`).

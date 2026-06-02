@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 
-from SMTPServer import ThreadedSMTPServer
-from SMTPHandler import SMTPHandler
-from DNSServer import DNSServer
-from SMBServer import SMBServer
-from relay import NTLMRelay
+# Support being run both as a script (python3 MITMsmtp/MITMsmtp.py) and as an
+# installed package module (python3 -m MITMsmtp / the MITMsmtp console command).
+try:
+    from .SMTPServer import ThreadedSMTPServer
+    from .SMTPHandler import SMTPHandler
+    from .DNSServer import DNSServer
+    from .SMBServer import SMBServer
+    from .relay import NTLMRelay
+except ImportError:
+    from SMTPServer import ThreadedSMTPServer
+    from SMTPHandler import SMTPHandler
+    from DNSServer import DNSServer
+    from SMBServer import SMBServer
+    from relay import NTLMRelay
 import threading
 import os
 import argparse
@@ -104,7 +113,10 @@ class MITMsmtp:
             raise ValueError("MITMsmtp is currently not running")
 
 # Import the proper authentication handlers
-from AuthHandler import AuthHandler
+try:
+    from .AuthHandler import AuthHandler
+except ImportError:
+    from AuthHandler import AuthHandler
 
 class SimpleMessageHandler:
     def addMessage(self):

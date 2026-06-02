@@ -60,22 +60,26 @@ That's it!
 *MITMsmtp can be used as standalone command line application and offers an easy to use Python3 API to integrate in your own project*
 
 ### Command Line (Tantalum Labs runner)
-This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` with optional DNS responder and rogue SMB server support. The SMTP, DNS and SMB servers can be enabled independently or all together:
+This fork's full-featured runner adds the optional DNS responder, rogue SMB server and NTLM relay modes on top of the SMTP capture. The SMTP, DNS, SMB and relay features can be enabled independently or combined.
 
-* Show options: `python3 MITMsmtp/MITMsmtp.py --help`
-* Plain SMTP: `python3 MITMsmtp/MITMsmtp.py --port 587 --print-lines`
-* STARTTLS: `python3 MITMsmtp/MITMsmtp.py --STARTTLS --port 587 --print-lines`
-* SMTPS (implicit TLS): `python3 MITMsmtp/MITMsmtp.py --SSL --port 465 --print-lines`
-* DNS responder + SMTP (lab use): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --print-dns --print-lines`
-* SMB credential capture (e.g. printer Scan to SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --print-smb`
-* SMB with forced LM downgrade: `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --smb-force-lm-downgrade --print-smb`
-* Everything at once (DNS + SMTP + SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --enable-smb --print-dns --print-smb --print-lines`
-* NTLM relay via impacket (needs `pip install impacket`): `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-target ldaps://dc01 --enable-dns --dns-ip <YOUR_IP>`
+After installing the package it is available as the `MITMsmtp` command and as `python3 -m MITMsmtp`. You can also run it directly from a checkout with `python3 MITMsmtp/MITMsmtp.py`. All three invocations accept the same flags:
 
-### Command Line (legacy packaged entrypoint)
-Running `MITMsmtp --help` will give you an overview about the available command line switches (legacy CLI; default port 8587):
+* Show options: `MITMsmtp --help` (or `python3 -m MITMsmtp --help`, or `python3 MITMsmtp/MITMsmtp.py --help`)
+* Plain SMTP: `MITMsmtp --port 587 --print-lines`
+* STARTTLS: `MITMsmtp --STARTTLS --port 587 --print-lines`
+* SMTPS (implicit TLS): `MITMsmtp --SSL --port 465 --print-lines`
+* DNS responder + SMTP (lab use): `sudo MITMsmtp --enable-dns --dns-ip <YOUR_IP> --print-dns --print-lines`
+* SMB credential capture (e.g. printer Scan to SMB): `sudo MITMsmtp --enable-smb --print-smb`
+* SMB with forced LM downgrade: `sudo MITMsmtp --enable-smb --smb-force-lm-downgrade --print-smb`
+* Everything at once (DNS + SMTP + SMB): `sudo MITMsmtp --enable-dns --dns-ip <YOUR_IP> --enable-smb --print-dns --print-smb --print-lines`
+* NTLM relay via impacket (needs `pip install impacket`): `sudo MITMsmtp --relay --relay-target ldaps://dc01 --enable-dns --dns-ip <YOUR_IP>`
+
+> Note: the default SMTP port for this runner is **587** (the legacy CLI below defaults to 8587).
+
+### Command Line (legacy SMTP-only entrypoint)
+The original SMTP-only CLI is preserved as the `MITMsmtp-legacy` command (also `python3 -m MITMsmtp.legacy`). It has no DNS/SMB/relay support and defaults to port 8587. Running `MITMsmtp-legacy --help` gives:
 ```
-usage: MITMsmtp [-h] [--server_address SERVER_ADDRESS] [--port PORT]
+usage: MITMsmtp-legacy [-h] [--server_address SERVER_ADDRESS] [--port PORT]
                 [--server_name SERVER_NAME] [--STARTTLS] [--SSL]
                 [--certfile CERTFILE] [--keyfile KEYFILE] [--log LOG]
                 [--disable-auth-plain] [--disable-auth-login] [--print-lines]
@@ -104,7 +108,7 @@ optional arguments:
                         (default: False)
 ```
 
-When running `MITMsmtp` without any parameters it will start an unencrypted SMTP server on port 8587 on all interfaces. Pointing Thunderbird or any other SMTP client will give you the ability to test MITMsmtp. Please keep in mind that the default port MITMsmtp differs from the SMTP default port.
+When running `MITMsmtp-legacy` without any parameters it will start an unencrypted SMTP server on port 8587 on all interfaces. Pointing Thunderbird or any other SMTP client will give you the ability to test MITMsmtp. Please keep in mind that this default port differs from the SMTP default port.
 
 As soon as a client has logged in, you will get the following information:
 
@@ -129,7 +133,7 @@ Recipients: recipient-a@example.com
 If you want to get the full message, you have to enable logging.
 
 ### Logging
-Running `MITMsmtp --log logdir` will enable logging in the legacy CLI. Please make sure that the directory exists. MITMsmtp will create n+1 files while n is the amount of received messages. Each mail will be written into a new file like it has been received. Additionally all received credentials are stored in `credentials.log`.
+Running `MITMsmtp-legacy --log logdir` will enable logging in the legacy CLI. Please make sure that the directory exists. MITMsmtp will create n+1 files while n is the amount of received messages. Each mail will be written into a new file like it has been received. Additionally all received credentials are stored in `credentials.log`.
 
 ### SMB credential capture (printers / scanners)
 Many multifunction printers, scanners and appliances offer a "Scan to SMB" (a.k.a. "Scan to network folder") feature that authenticates to an SMB share using a configured service account. When you can convince such a device to connect to a machine you control (for example via the bundled DNS responder, ARP spoofing, or simply by entering your host as the SMB target), this fork can stand up a rogue SMB server that captures the NTLM authentication and reconstructs the NetNTLMv1/NetNTLMv2 hash for offline cracking.
@@ -263,9 +267,9 @@ To start ARP Spoofing you will need ettercap. Run the following command and repl
 
 `ettercap -T -M arp /192.168.42.24/ /192.168.42.1/`
 
-Finally you can fire up MITMsmtp:
+Finally you can fire up MITMsmtp (using the legacy CLI for its directory-based mail/credential logging):
 
-`MITMsmtp --log log/`
+`MITMsmtp-legacy --log log/`
 
 #### Limitations
 As we perform a port forward, MITMsmtp can't determine the original packet destination. This means that MITMsmtp can't log the real SMTP server name or IP. If you need these information, just run wireshark while catching mails using MITMsmtp and filter for `tcp.port==587` or `dns`. This way you will be able to get the domain name as well as the original IP.

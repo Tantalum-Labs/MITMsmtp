@@ -26,7 +26,8 @@ setuptools.setup(
     },
     entry_points={
         'console_scripts': [
-            'MITMsmtp = MITMsmtp.__main__:main'
+            'MITMsmtp = MITMsmtp.__main__:main',
+            'MITMsmtp-legacy = MITMsmtp.legacy:main'
         ]
     },
     include_package_data=True,
