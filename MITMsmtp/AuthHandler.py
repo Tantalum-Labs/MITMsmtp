@@ -41,8 +41,8 @@ class PlainAuth:
                 self.handler.writeLine("334 ")  # Request auth data
                 auth_data = self.handler.readLine()
             
-            # Decode base64
-            decoded = base64.b64decode(auth_data).decode('utf-8')
+            # Decode base64; credentials are often ASCII but may be UTF-8.
+            decoded = base64.b64decode(auth_data).decode('utf-8', errors='replace')
             
             # PLAIN format: [authzid]\0username\0password
             auth_parts = decoded.split('\0')
@@ -59,11 +59,16 @@ class PlainAuth:
                 self.password = password
             else:
                 raise ValueError("Invalid PLAIN auth format")
-                
+
+            # Signal auth success so the client continues with MAIL FROM/RCPT TO.
+            self.handler.writeLine("235 2.7.0 Authentication successful")
+                 
         except Exception as e:
             print(f"[AUTH ERROR] Failed to decode PLAIN auth: {e}")
             self.username = "DECODE_ERROR"
             self.password = "DECODE_ERROR"
+            # Still accept to keep the SMTP flow going for capture purposes.
+            self.handler.writeLine("235 2.7.0 Authentication successful")
     
     def getUsername(self):
         return self.username
@@ -86,17 +91,22 @@ class LoginAuth:
             # Send Username prompt
             self.handler.writeLine("334 VXNlcm5hbWU6")  # Base64 for "Username:"
             username_line = self.handler.readLine()
-            self.username = base64.b64decode(username_line).decode('utf-8')
-            
+            self.username = base64.b64decode(username_line).decode('utf-8', errors='replace')
+             
             # Send Password prompt
             self.handler.writeLine("334 UGFzc3dvcmQ6")  # Base64 for "Password:"
             password_line = self.handler.readLine()
-            self.password = base64.b64decode(password_line).decode('utf-8')
-            
+            self.password = base64.b64decode(password_line).decode('utf-8', errors='replace')
+
+            # Signal auth success so the client continues with MAIL FROM/RCPT TO.
+            self.handler.writeLine("235 2.7.0 Authentication successful")
+             
         except Exception as e:
             print(f"[AUTH ERROR] Failed to handle LOGIN auth: {e}")
             self.username = "DECODE_ERROR"
             self.password = "DECODE_ERROR"
+            # Still accept to keep the SMTP flow going for capture purposes.
+            self.handler.writeLine("235 2.7.0 Authentication successful")
     
     def getUsername(self):
         return self.username

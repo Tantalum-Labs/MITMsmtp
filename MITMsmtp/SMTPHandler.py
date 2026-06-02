@@ -7,11 +7,28 @@ import re
 Connection Handler for SMTPServer
 """
 class SMTPHandler(StreamRequestHandler):
+    class ClientQuit(Exception):
+        pass
+
+    @staticmethod
+    def _looks_like_tls_handshake(data: bytes) -> bool:
+        if len(data) < 3:
+            return False
+        if data[0] in (0x14, 0x15, 0x16, 0x17) and data[1] == 0x03 and data[2] in (0x00, 0x01, 0x02, 0x03, 0x04):
+            return True
+        if data[0] == 0x80:
+            return True
+        return False
+
+    @staticmethod
+    def _is_quit(line: str) -> bool:
+        return line.strip().upper() == "QUIT"
+
     """
     Inits a variables for a new connection. This method IS called by method handle. This is NOT the constructor
     """
     def init(self):
-        self.rfile = self.connection.makefile()
+        self.rfile = self.connection.makefile('rb')
         self.message = self.server.messageHandler.addMessage()
         self.auth = None
         self.startedTLS = False
@@ -26,7 +43,18 @@ class SMTPHandler(StreamRequestHandler):
     @return: Read line
     """
     def readLine(self):
-        line = self.rfile.readline().strip()
+        raw = self.rfile.readline()
+        if raw == b"":
+            raise ConnectionError("Client closed the connection")
+        raw = raw.rstrip(b"\r\n")
+
+        if self._looks_like_tls_handshake(raw):
+            raise ValueError(
+                "Client appears to be speaking TLS to a plaintext SMTP socket. "
+                "Enable implicit TLS with --SSL (e.g., port 465) or use STARTTLS on port 587."
+            )
+
+        line = raw.decode("utf-8", errors="replace")
         if (self.server.printLines):
             print("C:" + line)
         return line
@@ -59,6 +87,22 @@ class SMTPHandler(StreamRequestHandler):
             self.sendIntermediate()
             self.readMSG()
             self.sendOK()
+        except SMTPHandler.ClientQuit:
+            try:
+                self.writeLine("221 2.0.0 Bye")
+            except Exception:
+                pass
+            try:
+                self.connection.close()
+            except Exception:
+                pass
+            return
+        except ConnectionError:
+            try:
+                self.connection.close()
+            except Exception:
+                pass
+            return
         except Exception as e:
             print("Closed connection!")
             self.connection.close()
@@ -78,6 +122,8 @@ class SMTPHandler(StreamRequestHandler):
     """
     def readEHLO(self):
         line = self.readLine()
+        if self._is_quit(line):
+            raise SMTPHandler.ClientQuit()
         match = re.match("EHLO (.*)", line, re.IGNORECASE)
         if (match == None):
             if (line.upper() == "EHLO"): #Handle empty clientname
@@ -101,10 +147,13 @@ class SMTPHandler(StreamRequestHandler):
         self.writeLine("250-STARTTLS")
         self.writeLine("250 DSN")
         line = self.readLine()
+        if self._is_quit(line):
+            raise SMTPHandler.ClientQuit()
         if (line == "STARTTLS"):
             self.writeLine("220 2.0.0 Ready to start TLS")
             self.connection = self.server.wrapSSL(self.connection)
-            self.rfile = self.connection.makefile()
+            self.rfile = self.connection.makefile('rb')
+            self.startedTLS = True
 
             self.readEHLO()
             self.sendHELLO()
@@ -124,6 +173,11 @@ class SMTPHandler(StreamRequestHandler):
     """
     def readAuth(self):
         line = self.readLine()
+        if self._is_quit(line):
+            raise SMTPHandler.ClientQuit()
+        self._readAuthLine(line)
+
+    def _readAuthLine(self, line):
         authMethod = self.server.authHandler.matchMethod(line)
         if (authMethod == None): #No supported auth method found
             if (line == "QUIT"):
@@ -141,6 +195,15 @@ class SMTPHandler(StreamRequestHandler):
     """
     def readSender(self):
         line = self.readLine()
+        if self._is_quit(line):
+            raise SMTPHandler.ClientQuit()
+
+        # Some clients may try multiple AUTH mechanisms (or pipeline) before sending MAIL FROM.
+        while (line.upper().startswith("AUTH ")):
+            self._readAuthLine(line)
+            line = self.readLine()
+            if self._is_quit(line):
+                raise SMTPHandler.ClientQuit()
         
         # More flexible regex to handle various MAIL FROM formats
         # Handles: MAIL FROM:<email@domain.com>, MAIL FROM:<>, mail from:<user@host>, etc.
@@ -178,6 +241,8 @@ class SMTPHandler(StreamRequestHandler):
     def readRecipients(self):
         while True:
             line = self.readLine()
+            if self._is_quit(line):
+                raise SMTPHandler.ClientQuit()
             if (line == "DATA"):
                 return
 

